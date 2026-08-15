@@ -1,0 +1,182 @@
+# AIDATA
+
+> **Fast. Compressed. PyTorch-Ready Dataset Storage.**
+
+AIDATA is a lightweight, high-performance dataset format designed for machine learning workflows. It compresses your data with `zstd`, indexes every chunk for instant random access, and integrates seamlessly with PyTorch — all without loading the entire dataset into RAM.
+
+[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-1.10+-ee4c2c.svg)](https://pytorch.org/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+---
+
+## ✨ Why AIDATA?
+
+| Problem | How AIDATA Solves It |
+|---------|---------------------|
+| Dataset too big for RAM | Chunked storage — only load what you need |
+| Slow CSV/NumPy loading | Binary format + index = instant random access |
+| Wasted disk space | `zstd` compression shrinks files 2×–5× |
+| Complex PyTorch boilerplate | Native `Dataset`, `DataLoader`, and tensor conversion |
+| No metadata tracking | JSON metadata embedded in every file |
+
+---
+
+## 🚀 Quick Start
+
+### Installation
+
+```bash
+pip install aidata
+```
+
+Or install from source:
+
+```bash
+git clone https://github.com/yourusername/aidata.git
+cd aidata
+pip install -e .
+```
+
+### 30-Second Example
+
+```python
+import numpy as np
+from aidata import AIDATAWriter, AIDATALoader
+
+# 1. Create data
+X = np.random.rand(100_000, 128).astype(np.float32)
+y = np.random.randint(0, 10, size=100_000, dtype=np.int64)
+
+# 2. Write once — compressed & indexed
+writer = AIDATAWriter("dataset.aidata")
+writer.write(X, y, compression=True, chunk_size=4096)
+
+# 3. Train instantly — no full-RAM load!
+loader = AIDATALoader("dataset.aidata", batch_size=256, shuffle=True)
+
+for X_batch, y_batch in loader:
+    # X_batch and y_batch are already torch.Tensor!
+    ...
+```
+
+---
+
+## 📦 Core Features
+
+- **🗜️ Compression** — `zstd` compression reduces file size significantly
+- **📇 Indexing** — Footer index enables O(1) random chunk access
+- **🧠 LRU Cache** — Recently used chunks stay in memory automatically
+- **⚡ PyTorch Native** — `Dataset`, `DataLoader`, and GPU-ready tensors out-of-the-box
+- **📝 Metadata** — Store dataset name, task, version, or any custom JSON metadata
+- **🔍 Random & Batch Access** — Read single samples or arbitrary batches instantly
+
+---
+
+## 📂 Project Structure
+
+```
+aidata/
+├── src/aidata/              # Core library
+│   ├── __init__.py
+│   ├── writer.py            # AIDATAWriter
+│   ├── reader.py            # AIDATAReader
+│   ├── dataset.py           # PyTorch Datasets
+│   ├── loader.py            # AIDATALoader
+│   └── integrations/
+│       └── pytorch.py       # Legacy PyTorch wrappers
+├── examples/                # Runnable examples
+│   ├── basic.py
+│   ├── pytorch_train.py
+│   ├── benchmark.py
+│   └── training_benchmark.py
+├── tests/                   # pytest suite
+│   └── test_basic.py
+├── docs/                    # Documentation
+│   ├── QUICKSTART.md
+│   ├── API_REFERENCE.md
+│   └── FAQ.md
+├── pyproject.toml
+└── README.md
+```
+
+---
+
+## 📖 Documentation
+
+| Document | Description |
+|----------|-------------|
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Step-by-step first-time setup |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Complete API for every class & method |
+| [docs/EXAMPLES_GUIDE.md](docs/EXAMPLES_GUIDE.md) | Detailed walkthroughs of all examples |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the file format works under the hood |
+| [docs/FAQ.md](docs/FAQ.md) | Common questions & troubleshooting |
+
+---
+
+## 🧪 Running Tests
+
+```bash
+pytest tests/test_basic.py -v
+```
+
+Expected output:
+```
+tests/test_basic.py::test_write_read_roundtrip PASSED
+tests/test_basic.py::test_aidata_dataset_tensors PASSED
+tests/test_basic.py::test_aidata_loader PASSED
+======================== 3 passed ========================
+```
+
+---
+
+## 🏃 Running Examples
+
+```bash
+cd examples
+python basic.py              # Basic read/write demo
+python pytorch_train.py      # Full PyTorch training loop
+python benchmark.py          # Performance vs NumPy
+python training_benchmark.py # CSV vs NumPy vs AIDATA training
+```
+
+---
+
+## ⚙️ Requirements
+
+- Python >= 3.8
+- NumPy >= 1.20.0
+- PyTorch >= 1.10.0
+- zstandard >= 0.15.0
+
+See [requirements.txt](requirements.txt) for pinned versions.
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## 📜 License
+
+AIDATA is released under the [MIT License](LICENSE).
+
+---
+
+## 💬 Support
+
+- 🐛 **Bug reports** → GitHub Issues
+- 💡 **Feature requests** → GitHub Discussions
+- 📧 **Questions** → Open a Discussion or email
+
+---
+
+> **Made with ❤️ for the ML community.**
+'''
+
+with open(f"{base}/README.md", "w") as f:
+    f.write(readme)
+
+print("README.md written")
