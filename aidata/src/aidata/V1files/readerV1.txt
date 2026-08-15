@@ -1,0 +1,365 @@
+import json
+import struct
+from collections import OrderedDict
+
+import numpy as np
+import zstandard as zstd
+
+from .format import (
+    MAGIC,
+    VERSION,
+    HEADER_FORMAT,
+    HEADER_SIZE,
+    FOOTER_FORMAT,
+    FOOTER_SIZE,
+)
+
+from .exceptions import (
+    InvalidAIDATAFile,
+    UnsupportedVersion,
+)
+
+
+class AIDATAReader:
+    """Reader for the AIDATA compressed dataset format.
+
+    Parameters
+    ----------
+    path : str
+        Path to the AIDATA file.
+    cache_size : int
+        Maximum number of decompressed chunks to keep in the LRU cache.
+    """
+
+    def __init__(self, path, cache_size=8):
+        self.path = path
+
+        # ==================================================
+        # Cache
+        # ==================================================
+
+        if cache_size <= 0:
+            raise ValueError("cache_size must be greater than 0")
+
+        self.cache_size = cache_size
+        self._cache = OrderedDict()
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+        # ==================================================
+        # Open file
+        # ==================================================
+
+        with open(self.path, "rb") as f:
+            # ------------------------------------------
+            # Header
+            # ------------------------------------------
+
+            header = f.read(HEADER_SIZE)
+
+            if len(header) != HEADER_SIZE:
+                raise InvalidAIDATAFile("File is too small")
+
+            (
+                magic,
+                version,
+                metadata_size,
+                chunk_count,
+            ) = struct.unpack(HEADER_FORMAT, header)
+
+            # ------------------------------------------
+            # Magic
+            # ------------------------------------------
+
+            if magic != MAGIC:
+                raise InvalidAIDATAFile("Invalid AIDATA magic")
+
+            # ------------------------------------------
+            # Version
+            # ------------------------------------------
+
+            if version != VERSION:
+                raise UnsupportedVersion(f"Unsupported version: {version}")
+
+            self.version = version
+            self.chunk_count = chunk_count
+
+            # ------------------------------------------
+            # Metadata
+            # ------------------------------------------
+
+            metadata_bytes = f.read(metadata_size)
+
+            try:
+                self.metadata = json.loads(metadata_bytes.decode("utf-8"))
+            except Exception as e:
+                raise InvalidAIDATAFile("Invalid metadata") from e
+
+            # ------------------------------------------
+            # Footer
+            # ------------------------------------------
+
+            f.seek(-FOOTER_SIZE, 2)
+            footer = f.read(FOOTER_SIZE)
+
+            if len(footer) != FOOTER_SIZE:
+                raise InvalidAIDATAFile("Invalid footer")
+
+            (
+                index_offset,
+                index_size,
+            ) = struct.unpack(FOOTER_FORMAT, footer)
+
+            # ------------------------------------------
+            # Index
+            # ------------------------------------------
+
+            f.seek(index_offset)
+            index_bytes = f.read(index_size)
+
+            try:
+                self.index = json.loads(index_bytes.decode("utf-8"))
+            except Exception as e:
+                raise InvalidAIDATAFile("Invalid index") from e
+
+        # ==================================================
+        # Validate index
+        # ==================================================
+
+        if len(self.index) != self.chunk_count:
+            raise InvalidAIDATAFile("Chunk count does not match index")
+
+        # ==================================================
+        # Decompressor
+        # ==================================================
+
+        self._decompressor = None
+        if self.metadata.get("compression") == "zstd":
+            self._decompressor = zstd.ZstdDecompressor()
+
+    # ==================================================
+    # Number of samples
+    # ==================================================
+
+    def __len__(self):
+        return self.metadata["samples"]
+
+    # ==================================================
+    # Dataset information
+    # ==================================================
+
+    def info(self):
+        """Return a copy of the file metadata."""
+        return self.metadata.copy()
+
+    # ==================================================
+    # Read chunk
+    # ==================================================
+
+    def _read_chunk(self, chunk_id):
+        # ==================================================
+        # Cache HIT
+        # ==================================================
+
+        if chunk_id in self._cache:
+            self.cache_hits += 1
+            X, y = self._cache.pop(chunk_id)
+            # Move to MRU position
+            self._cache[chunk_id] = (X, y)
+            return X, y
+
+        # ==================================================
+        # Cache MISS
+        # ==================================================
+
+        self.cache_misses += 1
+
+        chunk = self.index[chunk_id]
+
+        # ==================================================
+        # Read from disk
+        # ==================================================
+
+        with open(self.path, "rb") as f:
+            # ------------------------------------------
+            # X
+            # ------------------------------------------
+
+            f.seek(chunk["x_offset"])
+            x_data = f.read(chunk["x_size"])
+
+            # ------------------------------------------
+            # Y
+            # ------------------------------------------
+
+            f.seek(chunk["y_offset"])
+            y_data = f.read(chunk["y_size"])
+
+        # ==================================================
+        # Decompress
+        # ==================================================
+
+        if self._decompressor is not None:
+            x_data = self._decompressor.decompress(
+                x_data,
+                max_output_size=chunk["x_raw_size"],
+            )
+            y_data = self._decompressor.decompress(
+                y_data,
+                max_output_size=chunk["y_raw_size"],
+            )
+
+        # ==================================================
+        # NumPy
+        # ==================================================
+
+        X = np.frombuffer(
+            x_data,
+            dtype=np.dtype(self.metadata["x_dtype"]),
+        )
+
+        y = np.frombuffer(
+            y_data,
+            dtype=np.dtype(self.metadata["y_dtype"]),
+        )
+
+        samples = chunk["end"] - chunk["start"]
+
+        X = X.reshape(samples, self.metadata["features"])
+        y = y.reshape(samples)
+
+        result = (X, y)
+
+        # ==================================================
+        # Add to LRU cache
+        # ==================================================
+
+        self._cache[chunk_id] = result
+
+        # ==================================================
+        # Evict oldest
+        # ==================================================
+
+        if len(self._cache) > self.cache_size:
+            self._cache.popitem(last=False)
+
+        return result
+
+    # ==================================================
+    # Single sample
+    # ==================================================
+
+    def __getitem__(self, index):
+        if index < 0:
+            index += len(self)
+
+        if index < 0 or index >= len(self):
+            raise IndexError("AIDATA index out of range")
+
+        chunk_size = self.metadata["chunk_size"]
+        chunk_id = index // chunk_size
+
+        X, y = self._read_chunk(chunk_id)
+        chunk = self.index[chunk_id]
+        local_index = index - chunk["start"]
+
+        return (X[local_index], y[local_index])
+
+    # ==================================================
+    # Batch
+    # ==================================================
+
+    def get_batch(self, start, batch_size):
+        if batch_size <= 0:
+            raise ValueError("batch_size must be greater than 0")
+
+        if start < 0:
+            start += len(self)
+
+        if start < 0 or start >= len(self):
+            raise IndexError("Batch start out of range")
+
+        end = min(start + batch_size, len(self))
+        chunk_size = self.metadata["chunk_size"]
+
+        first_chunk = start // chunk_size
+        last_chunk = (end - 1) // chunk_size
+
+        X_parts = []
+        y_parts = []
+
+        # ==================================================
+        # Read required chunks
+        # ==================================================
+
+        for chunk_id in range(first_chunk, last_chunk + 1):
+            X_chunk, y_chunk = self._read_chunk(chunk_id)
+            chunk = self.index[chunk_id]
+
+            chunk_start = chunk["start"]
+            chunk_end = chunk["end"]
+
+            local_start = max(start, chunk_start) - chunk_start
+            local_end = min(end, chunk_end) - chunk_start
+
+            X_parts.append(X_chunk[local_start:local_end])
+            y_parts.append(y_chunk[local_start:local_end])
+
+        # ==================================================
+        # Combine
+        # ==================================================
+
+        X_batch = np.concatenate(X_parts, axis=0)
+        y_batch = np.concatenate(y_parts, axis=0)
+
+        return (X_batch, y_batch)
+
+    # ==================================================
+    # Complete chunk
+    # ==================================================
+
+    def get_chunk(self, chunk_id):
+        if chunk_id < 0 or chunk_id >= self.chunk_count:
+            raise IndexError("Chunk index out of range")
+
+        return self._read_chunk(chunk_id)
+
+    # ==================================================
+    # Cache information
+    # ==================================================
+
+    def cache_info(self):
+        return {
+            "cache_size": self.cache_size,
+            "cached_chunks": len(self._cache),
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+            "cache_keys": list(self._cache.keys()),
+        }
+
+    # ==================================================
+    # Clear cache
+    # ==================================================
+
+    def clear_cache(self):
+        self._cache.clear()
+        self.cache_hits = 0
+        self.cache_misses = 0
+
+    # ==================================================
+    # Close
+    # ==================================================
+
+    def close(self):
+        """Release resources (clear cache)."""
+        self.clear_cache()
+
+    # ==================================================
+    # Context manager
+    # ==================================================
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()

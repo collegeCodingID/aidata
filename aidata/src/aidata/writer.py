@@ -18,6 +18,9 @@ from .exceptions import AIDATAError
 class AIDATAWriter:
     """Writer for the AIDATA compressed dataset format.
 
+    Now supports multi-dimensional targets (e.g. segmentation masks,
+    multi-label, images) in addition to 1D labels.
+
     Parameters
     ----------
     path : str or pathlib.Path
@@ -41,9 +44,9 @@ class AIDATAWriter:
         Parameters
         ----------
         X : array-like
-            Feature matrix (2D).
+            Feature array. Must be at least 2D (samples first dim).
         y : array-like
-            Target vector (1D).
+            Target array. Must be at least 1D (samples first dim).
         metadata : dict, optional
             User-defined metadata stored in the file header.
         compression : bool
@@ -64,15 +67,22 @@ class AIDATAWriter:
         # Validation
         # ==================================================
 
-        if X.ndim != 2:
-            raise AIDATAError("X must be a 2D array")
+        if X.ndim < 2:
+            raise AIDATAError(
+                "X must be at least 2D (samples, ...). "
+                f"Got shape {X.shape} with ndim={X.ndim}"
+            )
 
-        if y.ndim != 1:
-            raise AIDATAError("y must be a 1D array")
+        if y.ndim < 1:
+            raise AIDATAError(
+                "y must be at least 1D (samples, ...). "
+                f"Got shape {y.shape} with ndim={y.ndim}"
+            )
 
         if len(X) != len(y):
             raise AIDATAError(
-                "X and y must contain the same number of samples"
+                "X and y must contain the same number of samples. "
+                f"Got X={len(X)}, y={len(y)}"
             )
 
         if chunk_size <= 0:
@@ -87,11 +97,13 @@ class AIDATAWriter:
         metadata = {
             "version": VERSION,
             "samples": len(X),
-            "features": X.shape[1],
+            "features": X.shape[1] if X.ndim == 2 else X.shape,  # backward compat
             "x_shape": list(X.shape),
             "y_shape": list(y.shape),
             "x_dtype": str(X.dtype),
             "y_dtype": str(y.dtype),
+            "x_ndim": X.ndim,
+            "y_ndim": y.ndim,
             "compression": "zstd" if compression else "none",
             "chunk_size": chunk_size,
             **user_metadata,
@@ -224,7 +236,8 @@ class AIDATAWriter:
         if verbose:
             print(f"File created : {self.path}")
             print(f"Samples      : {len(X)}")
-            print(f"Features     : {X.shape[1]}")
+            print(f"X shape      : {X.shape}")
+            print(f"y shape      : {y.shape}")
             print(f"Chunks       : {len(chunks)}")
             print(f"Chunk size   : {chunk_size}")
             print(f"Compression  : {metadata['compression']}")

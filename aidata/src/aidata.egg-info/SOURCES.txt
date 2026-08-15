@@ -1,3 +1,4 @@
+LICENSE
 README.md
 pyproject.toml
 src/aidata/__init__.py
@@ -15,3 +16,4 @@ src/aidata.egg-info/top_level.txt
 src/aidata/integrations/__init__.py
 src/aidata/integrations/pytorch.py
 tests/test_basic.py
+tests/test_multidim.py

@@ -23,6 +23,8 @@ from .exceptions import (
 class AIDATAReader:
     """Reader for the AIDATA compressed dataset format.
 
+    Now supports multi-dimensional X and y arrays.
+
     Parameters
     ----------
     path : str
@@ -225,8 +227,21 @@ class AIDATAReader:
 
         samples = chunk["end"] - chunk["start"]
 
-        X = X.reshape(samples, self.metadata["features"])
-        y = y.reshape(samples)
+        # --------------------------------------------------
+        # Multi-dimensional reshape support
+        # --------------------------------------------------
+
+        x_shape = self.metadata["x_shape"]
+        y_shape = self.metadata["y_shape"]
+
+        # X: (samples, *feature_dims)
+        X = X.reshape(samples, *x_shape[1:])
+
+        # y: (samples, *target_dims)
+        if len(y_shape) > 1:
+            y = y.reshape(samples, *y_shape[1:])
+        else:
+            y = y.reshape(samples)
 
         result = (X, y)
 
