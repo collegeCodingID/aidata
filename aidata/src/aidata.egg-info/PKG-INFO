@@ -1,0 +1,25 @@
+Metadata-Version: 2.4
+Name: aidata
+Version: 0.5.0
+Summary: Experimental AI-focused dataset storage format with compressed chunks, indexing, and PyTorch integration
+Author: AIDATA Contributors
+License: MIT
+Keywords: dataset,pytorch,compression,benchmark,machine-learning
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.20.0
+Requires-Dist: zstandard>=0.15.0
+Requires-Dist: torch>=1.10.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"

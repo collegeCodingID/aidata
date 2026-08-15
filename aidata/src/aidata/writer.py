@@ -1,0 +1,230 @@
+import json
+import struct
+from pathlib import Path
+
+import numpy as np
+import zstandard as zstd
+
+from .format import (
+    MAGIC,
+    VERSION,
+    HEADER_FORMAT,
+    FOOTER_FORMAT,
+)
+
+from .exceptions import AIDATAError
+
+
+class AIDATAWriter:
+    """Writer for the AIDATA compressed dataset format.
+
+    Parameters
+    ----------
+    path : str or pathlib.Path
+        Output file path.
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+
+    def write(
+        self,
+        X,
+        y,
+        metadata=None,
+        compression=True,
+        chunk_size=4096,
+        verbose=True,
+    ):
+        """Write a dataset to an AIDATA file.
+
+        Parameters
+        ----------
+        X : array-like
+            Feature matrix (2D).
+        y : array-like
+            Target vector (1D).
+        metadata : dict, optional
+            User-defined metadata stored in the file header.
+        compression : bool
+            Whether to apply zstd compression to chunks.
+        chunk_size : int
+            Number of samples per chunk.
+        verbose : bool
+            Print summary after writing.
+        """
+        # ==================================================
+        # Convert to NumPy
+        # ==================================================
+
+        X = np.asarray(X)
+        y = np.asarray(y)
+
+        # ==================================================
+        # Validation
+        # ==================================================
+
+        if X.ndim != 2:
+            raise AIDATAError("X must be a 2D array")
+
+        if y.ndim != 1:
+            raise AIDATAError("y must be a 1D array")
+
+        if len(X) != len(y):
+            raise AIDATAError(
+                "X and y must contain the same number of samples"
+            )
+
+        if chunk_size <= 0:
+            raise AIDATAError("chunk_size must be greater than 0")
+
+        # ==================================================
+        # Metadata
+        # ==================================================
+
+        user_metadata = metadata or {}
+
+        metadata = {
+            "version": VERSION,
+            "samples": len(X),
+            "features": X.shape[1],
+            "x_shape": list(X.shape),
+            "y_shape": list(y.shape),
+            "x_dtype": str(X.dtype),
+            "y_dtype": str(y.dtype),
+            "compression": "zstd" if compression else "none",
+            "chunk_size": chunk_size,
+            **user_metadata,
+        }
+
+        metadata_bytes = json.dumps(metadata).encode("utf-8")
+
+        # ==================================================
+        # Compressor
+        # ==================================================
+
+        compressor = None
+        if compression:
+            compressor = zstd.ZstdCompressor(level=3)
+
+        # ==================================================
+        # Prepare chunks
+        # ==================================================
+
+        chunks = []
+
+        for start in range(0, len(X), chunk_size):
+            end = min(start + chunk_size, len(X))
+
+            x_chunk = X[start:end]
+            y_chunk = y[start:end]
+
+            # ------------------------------------------
+            # Raw bytes
+            # ------------------------------------------
+
+            x_raw = x_chunk.tobytes()
+            y_raw = y_chunk.tobytes()
+
+            # ------------------------------------------
+            # Compress
+            # ------------------------------------------
+
+            if compressor is not None:
+                x_data = compressor.compress(x_raw)
+                y_data = compressor.compress(y_raw)
+            else:
+                x_data = x_raw
+                y_data = y_raw
+
+            chunks.append({
+                "start": start,
+                "end": end,
+                "x_raw_size": len(x_raw),
+                "y_raw_size": len(y_raw),
+                "x_size": len(x_data),
+                "y_size": len(y_data),
+                "x_data": x_data,
+                "y_data": y_data,
+            })
+
+        # ==================================================
+        # Header
+        # ==================================================
+
+        header = struct.pack(
+            HEADER_FORMAT,
+            MAGIC,
+            VERSION,
+            len(metadata_bytes),
+            len(chunks),
+        )
+
+        # ==================================================
+        # Write
+        # ==================================================
+
+        with open(self.path, "wb") as f:
+            # ------------------------------------------
+            # Header
+            # ------------------------------------------
+
+            f.write(header)
+
+            # ------------------------------------------
+            # Metadata
+            # ------------------------------------------
+
+            f.write(metadata_bytes)
+
+            # ------------------------------------------
+            # Chunks
+            # ------------------------------------------
+
+            index = []
+
+            for chunk in chunks:
+                # X location
+                x_offset = f.tell()
+                f.write(chunk["x_data"])
+
+                # Y location
+                y_offset = f.tell()
+                f.write(chunk["y_data"])
+
+                index.append({
+                    "start": chunk["start"],
+                    "end": chunk["end"],
+                    "x_offset": x_offset,
+                    "y_offset": y_offset,
+                    "x_size": chunk["x_size"],
+                    "y_size": chunk["y_size"],
+                    "x_raw_size": chunk["x_raw_size"],
+                    "y_raw_size": chunk["y_raw_size"],
+                })
+
+            # ------------------------------------------
+            # Index
+            # ------------------------------------------
+
+            index_offset = f.tell()
+            index_bytes = json.dumps(index).encode("utf-8")
+            f.write(index_bytes)
+
+            # ------------------------------------------
+            # Footer
+            # ------------------------------------------
+
+            f.write(struct.pack(FOOTER_FORMAT, index_offset, len(index_bytes)))
+
+        # ==================================================
+        # Information
+        # ==================================================
+
+        if verbose:
+            print(f"File created : {self.path}")
+            print(f"Samples      : {len(X)}")
+            print(f"Features     : {X.shape[1]}")
+            print(f"Chunks       : {len(chunks)}")
+            print(f"Chunk size   : {chunk_size}")
+            print(f"Compression  : {metadata['compression']}")

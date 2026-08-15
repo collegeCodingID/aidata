@@ -1,0 +1,17 @@
+README.md
+pyproject.toml
+src/aidata/__init__.py
+src/aidata/dataset.py
+src/aidata/exceptions.py
+src/aidata/format.py
+src/aidata/loader.py
+src/aidata/reader.py
+src/aidata/writer.py
+src/aidata.egg-info/PKG-INFO
+src/aidata.egg-info/SOURCES.txt
+src/aidata.egg-info/dependency_links.txt
+src/aidata.egg-info/requires.txt
+src/aidata.egg-info/top_level.txt
+src/aidata/integrations/__init__.py
+src/aidata/integrations/pytorch.py
+tests/test_basic.py
