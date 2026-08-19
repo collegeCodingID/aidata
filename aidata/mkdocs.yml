@@ -1,0 +1,30 @@
+site_name: AIDATA
+site_description: Fast, validated dataset storage and loading for machine learning.
+site_url: https://YOUR_USERNAME.github.io/aidata/
+repo_url: https://github.com/YOUR_USERNAME/aidata
+repo_name: YOUR_USERNAME/aidata
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - API reference: api.md
+  - PyTorch: pytorch.md
+  - Format specification: format.md
+  - Architecture: architecture.md
+  - Reliability & security: reliability.md
+  - Benchmarking: benchmarking.md
+  - Roadmap: roadmap.md
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - tables

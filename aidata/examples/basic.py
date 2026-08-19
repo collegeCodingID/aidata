@@ -123,7 +123,7 @@ print("After reading all chunks:", dataset.cache_info())
 
 print("\n========== PYTORCH SAMPLE DATASET ==========")
 
-torch_dataset = AIDATAPyTorchDataset(dataset)
+torch_dataset = AIDATAPyTorchDataset("training.aidata")
 
 X_torch, y_torch = torch_dataset[0]
 
@@ -139,7 +139,9 @@ print("Y dtype:", y_torch.dtype)
 
 print("\n========== PYTORCH BATCH DATASET ==========")
 
-batch_dataset = AIDATABatchDataset(dataset, batch_size=256)
+#batch_dataset = AIDATABatchDataset(dataset, batch_size=256)
+batch_dataset = AIDATABatchDataset("training.aidata", batch_size=256)
+
 
 X_torch, y_torch = batch_dataset[0]
 

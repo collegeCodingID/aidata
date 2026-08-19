@@ -4,37 +4,39 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aidata"
-version = "0.5.0"
-description = "Experimental AI-focused dataset storage format with compressed chunks, indexing, and PyTorch integration"
+version = "0.5.6"
+description = "Fast, validated dataset storage and loading for machine learning"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "AIDATA Contributors"},
 ]
-keywords = ["dataset", "pytorch", "compression", "benchmark", "machine-learning"]
+keywords = ["dataset", "pytorch", "compression", "benchmark", "machine-learning", "data-storage", "dataset-format", "numpy"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
     "numpy>=1.20.0",
-    "zstandard>=0.15.0",
-    "torch>=1.10.0",
 ]
 
 [project.optional-dependencies]
+torch = [
+    "torch>=1.10.0",
+]
 dev = [
     "pytest>=7.0",
+    "torch>=1.10.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -42,3 +44,8 @@ where = ["src"]
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+pythonpath = ["src"]

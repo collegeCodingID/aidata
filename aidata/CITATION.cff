@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If AIDATA contributes to your research or software, please cite the project repository."
+title: "AIDATA"
+version: "0.5.6"
+type: software
+abstract: "Fast, validated dataset storage and loading for machine learning."
+license: MIT
+repository-code: "https://github.com/YOUR_USERNAME/aidata"
+url: "https://github.com/YOUR_USERNAME/aidata"
+authors:
+  - family-names: "Sharma"
+    given-names: "Aditya Praveen"
+date-released: 2026-08-19
+keywords:
+  - machine learning
+  - datasets
+  - PyTorch
+  - NumPy
+  - data storage

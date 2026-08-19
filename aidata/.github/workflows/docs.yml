@@ -1,0 +1,36 @@
+name: Documentation check
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check documentation links to local files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path('.')
+          files = [root / 'README.md', *Path('docs').glob('*.md'), root / 'CONTRIBUTING.md']
+          missing = []
+          pattern = re.compile(r'\[[^\]]+\]\(([^)]+)\)')
+          for path in files:
+              text = path.read_text(encoding='utf-8')
+              for target in pattern.findall(text):
+                  if target.startswith(('http://', 'https://', '#', 'mailto:')):
+                      continue
+                  target_path = (path.parent / target.split('#', 1)[0]).resolve()
+                  if not target_path.exists():
+                      missing.append(f'{path}: {target}')
+          if missing:
+              print('Missing documentation targets:')
+              print('\n'.join(missing))
+              raise SystemExit(1)
+          print('Documentation local-link check passed.')
+          PY

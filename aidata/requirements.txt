@@ -1,0 +1,2 @@
+numpy>=1.20.0
+# Optional PyTorch integration: pip install -e ".[torch]"

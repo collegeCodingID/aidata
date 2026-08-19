@@ -1,238 +1,109 @@
-# 7. CONTRIBUTING.md
-# 🤝 Contributing to AIDATA
+# Contributing to AIDATA
 
-Thank you for your interest in contributing! This document will help you get started.
+Thank you for contributing. AIDATA is intentionally small, so changes should solve a real dataset or ML-engineering problem without unnecessarily expanding the core API.
 
----
+## Development requirements
 
-## 🚀 Quick Start
-
-1. **Fork** the repository on GitHub
-2. **Clone** your fork:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/aidata.git
-   cd aidata
-   ```
-3. **Install** in development mode:
-   ```bash
-   pip install -e ".[dev]"
-   ```
-4. **Run tests** to ensure everything works:
-   ```bash
-   pytest tests/ -v
-   ```
-
----
-
-## 📋 Development Setup
-
-### Requirements
-
-- Python >= 3.8
+- Python 3.10+
 - Git
+- NumPy
+- Pytest
+- PyTorch only when working on the optional integration
 
-### Install Development Dependencies
-
-```bash
-pip install -e ".[dev]"
-```
-
-This installs:
-- `pytest` for testing
-- `numpy`, `torch`, `zstandard` for runtime
-
-### Run Tests
+## Setup
 
 ```bash
-# All tests
-pytest tests/ -v
-
-# Specific test
-pytest tests/test_basic.py::test_write_read_roundtrip -v
-
-# With coverage
-pytest tests/ --cov=aidata --cov-report=html
+git clone https://github.com/YOUR_USERNAME/aidata.git
+cd aidata
+python -m pip install -e ".[dev]"
 ```
 
----
+Run tests:
 
-## 🐛 Reporting Bugs
-
-Before reporting, please:
-1. Check existing issues
-2. Update to the latest version
-3. Try to isolate the problem
-
-**Good bug reports include:**
-- AIDATA version (`python -c "import aidata; print(aidata.__version__)"`)
-- Python version
-- Operating system
-- Minimal code to reproduce
-- Expected vs actual behavior
-- Full error traceback
-
----
-
-## 💡 Suggesting Features
-
-Feature requests are welcome! Please:
-1. Describe the use case
-2. Explain why existing features don\'t solve it
-3. Propose an API (if applicable)
-
----
-
-## 📝 Code Style
-
-- Follow **PEP 8**
-- Use **type hints** for public APIs
-- Add **docstrings** to all classes and methods
-- Keep functions focused and small
-
-### Example
-
-```python
-def get_batch(self, start: int, batch_size: int) -> Tuple[np.ndarray, np.ndarray]:
-    """Read a contiguous batch of samples.
-
-    Parameters
-    ----------
-    start : int
-        Starting sample index.
-    batch_size : int
-        Number of samples to read.
-
-    Returns
-    -------
-    tuple
-        (X_batch, y_batch) as NumPy arrays.
-
-    Raises
-    ------
-    IndexError
-        If start is out of range.
-    ValueError
-        If batch_size <= 0.
-    """
+```bash
+pytest -q
 ```
 
----
+## Before implementing a large feature
 
-## 🧪 Adding Tests
+Open an issue first when a change affects:
 
-All new features must include tests. Place tests in `tests/`.
+- the file format
+- public APIs
+- compression
+- indexing
+- caching
+- PyTorch worker behavior
+- performance characteristics
 
-### Test Template
+Describe the use case and proposed API.
 
-```python
-def test_my_feature():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = os.path.join(tmpdir, "test.aidata")
-        
-        # Setup
-        X = np.random.rand(100, 10).astype(np.float32)
-        y = np.random.randint(0, 2, size=100, dtype=np.int64)
-        
-        writer = AIDATAWriter(path)
-        writer.write(X, y, verbose=False)
-        
-        # Test
-        reader = AIDATAReader(path)
-        assert len(reader) == 100
-        
-        # Cleanup (automatic with TemporaryDirectory)
+## Code rules
+
+- Follow PEP 8.
+- Add type hints to new public APIs where practical.
+- Add docstrings to new public classes and methods.
+- Keep functions focused.
+- Avoid unnecessary dependencies in the core package.
+- Do not silently change file-format semantics.
+
+## Tests
+
+New behavior should have tests. For format/parser changes, include malformed-input and boundary cases.
+
+Useful commands:
+
+```bash
+pytest tests/test_basic.py -q
+pytest tests/test_hardening.py -q
+pytest tests/test_fuzzing.py -q
+pytest tests/test_api_compatibility.py -q
+pytest -q
 ```
 
----
+For performance-sensitive changes, run the benchmarks and report the hardware and configuration.
 
-## 📖 Documentation
+## Pull requests
 
-Documentation improvements are highly valued! You can:
-- Fix typos in README/docs
-- Add examples
-- Improve docstrings
-- Write tutorials
+A good PR should contain:
 
-Docs are in:
-- `README.md` — Overview
-- `docs/` — Detailed guides
-- Docstrings in source code
+- a focused change
+- tests
+- documentation when user behavior changes
+- changelog entry when appropriate
+- compatibility discussion for format/API changes
+- benchmark evidence for I/O or training-path changes
 
----
+## Commit messages
 
-## 🔄 Pull Request Process
+Prefer concise, descriptive commits, for example:
 
-1. **Create a branch:**
-   ```bash
-   git checkout -b feature/my-feature
-   ```
+```text
+Add strict trailing-zlib validation
+Fix worker-local reader lifecycle
+Document AIDATA v1 index layout
+```
 
-2. **Make your changes**
+## Release process
 
-3. **Add tests** for new functionality
+Maintainers should:
 
-4. **Run the test suite:**
-   ```bash
-   pytest tests/ -v
-   ```
+1. update the package version
+2. update `CHANGELOG.md`
+3. run the complete test suite
+4. build the package
+5. inspect the wheel/sdist
+6. publish to PyPI
+7. create the matching git tag
 
-5. **Update documentation** if needed
+Example build command:
 
-6. **Commit with clear messages:**
-   ```bash
-   git commit -m "Add feature: sample-level shuffling"
-   ```
+```bash
+python -m build
+```
 
-7. **Push and open a Pull Request:**
-   ```bash
-   git push origin feature/my-feature
-   ```
+## Documentation
 
-### PR Checklist
+The main entry point is `README.md`. Detailed documentation lives in `docs/`.
 
-- [ ] Tests pass locally
-- [ ] New tests added for new features
-- [ ] Documentation updated
-- [ ] Code follows style guide
-- [ ] Commit messages are clear
-
----
-
-## 🏷️ Release Process
-
-Maintainers only:
-
-1. Update version in `src/aidata/__init__.py`
-2. Update `CHANGELOG.md`
-3. Create a git tag:
-   ```bash
-   git tag v0.6.0
-   git push origin v0.6.0
-   ```
-4. Build and publish:
-   ```bash
-   python -m build
-   python -m twine upload dist/*
-   ```
-
----
-
-## 📜 Code of Conduct
-
-- Be respectful and inclusive
-- Accept constructive criticism gracefully
-- Focus on what\'s best for the community
-- Show empathy towards others
-
----
-
-## ❓ Questions?
-
-- Open a GitHub Discussion
-- Comment on an existing issue
-- Email the maintainers
-
-Thank you for contributing! 🎉
-
-Dev by: aditya praveen sharma ( valkariyon group )
-'''
+If an API behavior changes, update both the API documentation and at least one runnable example where appropriate.

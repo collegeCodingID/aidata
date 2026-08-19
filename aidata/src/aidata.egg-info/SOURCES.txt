@@ -15,5 +15,10 @@ src/aidata.egg-info/requires.txt
 src/aidata.egg-info/top_level.txt
 src/aidata/integrations/__init__.py
 src/aidata/integrations/pytorch.py
+tests/test_api_compatibility.py
 tests/test_basic.py
+tests/test_fuzzing.py
+tests/test_hardening.py
 tests/test_multidim.py
+tests/test_v053.py
+tests/test_v054.py

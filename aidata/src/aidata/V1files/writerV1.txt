@@ -3,7 +3,7 @@ import struct
 from pathlib import Path
 
 import numpy as np
-import zstandard as zstd
+import zlib as zlib
 
 from .format import (
     MAGIC,
@@ -47,7 +47,7 @@ class AIDATAWriter:
         metadata : dict, optional
             User-defined metadata stored in the file header.
         compression : bool
-            Whether to apply zstd compression to chunks.
+            Whether to apply zlib compression to chunks.
         chunk_size : int
             Number of samples per chunk.
         verbose : bool
@@ -92,7 +92,7 @@ class AIDATAWriter:
             "y_shape": list(y.shape),
             "x_dtype": str(X.dtype),
             "y_dtype": str(y.dtype),
-            "compression": "zstd" if compression else "none",
+            "compression": "zlib" if compression else "none",
             "chunk_size": chunk_size,
             **user_metadata,
         }
@@ -105,7 +105,7 @@ class AIDATAWriter:
 
         compressor = None
         if compression:
-            compressor = zstd.ZstdCompressor(level=3)
+            compressor = zlib.ZlibCompressor(level=3)
 
         # ==================================================
         # Prepare chunks

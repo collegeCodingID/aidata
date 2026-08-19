@@ -3,7 +3,7 @@ import struct
 from collections import OrderedDict
 
 import numpy as np
-import zstandard as zstd
+import zlib as zlib
 
 from .format import (
     MAGIC,
@@ -134,8 +134,8 @@ class AIDATAReader:
         # ==================================================
 
         self._decompressor = None
-        if self.metadata.get("compression") == "zstd":
-            self._decompressor = zstd.ZstdDecompressor()
+        if self.metadata.get("compression") == "zlib":
+            self._decompressor = zlib.ZlibDecompressor()
 
     # ==================================================
     # Number of samples

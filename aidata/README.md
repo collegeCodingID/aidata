@@ -1,182 +1,453 @@
 # AIDATA
 
-> **Fast. Compressed. PyTorch-Ready Dataset Storage.**
+> Fast, validated dataset storage and loading for machine learning.
 
-AIDATA is a lightweight, high-performance dataset format designed for machine learning workflows. It compresses your data with `zstd`, indexes every chunk for instant random access, and integrates seamlessly with PyTorch — all without loading the entire dataset into RAM.
+AIDATA is a Python library for storing NumPy `X`/`y` datasets in a compact, chunked binary format with optional zlib compression, indexed random access, integrity checks, caching, and optional PyTorch integration.
 
-[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
-[![PyTorch](https://img.shields.io/badge/PyTorch-1.10+-ee4c2c.svg)](https://pytorch.org/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-
----
-
-## ✨ Why AIDATA?
-
-| Problem | How AIDATA Solves It |
-|---------|---------------------|
-| Dataset too big for RAM | Chunked storage — only load what you need |
-| Slow CSV/NumPy loading | Binary format + index = instant random access |
-| Wasted disk space | `zstd` compression shrinks files 2×–5× |
-| Complex PyTorch boilerplate | Native `Dataset`, `DataLoader`, and tensor conversion |
-| No metadata tracking | JSON metadata embedded in every file |
+**Current release:** `0.5.6`  
+**Python:** `>=3.10`  
+**License:** MIT
 
 ---
 
-## 🚀 Quick Start
+## Why AIDATA?
 
-### Installation
+Machine-learning training pipelines repeatedly need the same operations:
+
+- store large numerical datasets efficiently
+- read samples or contiguous batches without loading the entire dataset
+- detect damaged or incomplete dataset files
+- keep training data in a format designed around sample-oriented access
+- integrate cleanly with PyTorch workers
+
+AIDATA focuses on that layer. It is **not** a replacement for NumPy, pandas, Parquet, a database, or a model-training framework.
+
+### Current capabilities
+
+| Capability | AIDATA 0.5.6 |
+|---|:---:|
+| Chunked binary storage | ✓ |
+| Optional zlib compression | ✓ |
+| Per-chunk CRC32 | ✓ |
+| Metadata SHA-256 integrity check | ✓ |
+| Atomic writes | ✓ |
+| Random sample access | ✓ |
+| Contiguous batch reads | ✓ |
+| LRU chunk cache | ✓ |
+| Multi-dimensional targets | ✓ |
+| PyTorch Dataset | ✓ |
+| PyTorch batch dataset | ✓ |
+| Worker-safe PyTorch loading | ✓ |
+| Deterministic corruption tests | ✓ |
+| Python 3.10–3.14 CI | ✓ |
+| Dataset profiling | Planned |
+| Data validation engine | Planned |
+| Dataset versioning | Planned |
+| Data drift detection | Planned |
+
+---
+
+## Installation
+
+### Core
 
 ```bash
 pip install aidata
 ```
 
-Or install from source:
+### PyTorch integration
 
 ```bash
-git clone https://github.com/yourusername/aidata.git
-cd aidata
-pip install -e .
+pip install "aidata[torch]"
 ```
 
-### 30-Second Example
+### Development
+
+```bash
+git clone https://github.com/YOUR_USERNAME/aidata.git
+cd aidata
+python -m pip install -e ".[dev]"
+pytest -q
+```
+
+Replace `YOUR_USERNAME` with the actual repository owner before publishing.
+
+---
+
+## 30-second example
 
 ```python
 import numpy as np
-from aidata import AIDATAWriter, AIDATALoader
+from aidata import AIDATAWriter, AIDATAReader
 
-# 1. Create data
 X = np.random.rand(100_000, 128).astype(np.float32)
-y = np.random.randint(0, 10, size=100_000, dtype=np.int64)
+y = np.random.randint(0, 10, 100_000, dtype=np.int64)
 
-# 2. Write once — compressed & indexed
-writer = AIDATAWriter("dataset.aidata")
-writer.write(X, y, compression=True, chunk_size=4096)
+AIDATAWriter("train.aidata").write(
+    X,
+    y,
+    compression=True,
+    compression_level=3,
+    chunk_size=4096,
+    verbose=False,
+)
 
-# 3. Train instantly — no full-RAM load!
-loader = AIDATALoader("dataset.aidata", batch_size=256, shuffle=True)
+with AIDATAReader("train.aidata") as reader:
+    x0, y0 = reader[0]
+    xb, yb = reader.get_batch(0, 256)
 
-for X_batch, y_batch in loader:
-    # X_batch and y_batch are already torch.Tensor!
+print(x0.shape, y0.shape)
+print(xb.shape, yb.shape)
+```
+
+The first dimension is always the sample dimension.
+
+---
+
+## PyTorch
+
+Install:
+
+```bash
+pip install "aidata[torch]"
+```
+
+Then:
+
+```python
+from torch.utils.data import DataLoader
+from aidata import AIDATADataset
+
+dataset = AIDATADataset("train.aidata")
+
+loader = DataLoader(
+    dataset,
+    batch_size=256,
+    shuffle=True,
+    num_workers=4,
+    persistent_workers=True,
+)
+
+for X, y in loader:
+    # X and y are torch.Tensor objects.
     ...
 ```
 
----
+`AIDATADataset` creates worker-local readers so path-based datasets can be used with multiple PyTorch workers.
 
-## 📦 Core Features
+For contiguous batch-oriented access:
 
-- **🗜️ Compression** — `zstd` compression reduces file size significantly
-- **📇 Indexing** — Footer index enables O(1) random chunk access
-- **🧠 LRU Cache** — Recently used chunks stay in memory automatically
-- **⚡ PyTorch Native** — `Dataset`, `DataLoader`, and GPU-ready tensors out-of-the-box
-- **📝 Metadata** — Store dataset name, task, version, or any custom JSON metadata
-- **🔍 Random & Batch Access** — Read single samples or arbitrary batches instantly
+```python
+from torch.utils.data import DataLoader
+from aidata import AIDATABatchDataset
 
----
-
-## 📂 Project Structure
-
+batches = AIDATABatchDataset("train.aidata", batch_size=256)
+loader = DataLoader(
+    batches,
+    batch_size=None,
+    shuffle=True,
+    num_workers=0,
+)
 ```
+
+For sequential high-throughput loading:
+
+```python
+from aidata import AIDATALoader
+
+with AIDATALoader("train.aidata", batch_size=256, shuffle=True) as loader:
+    for X, y in loader:
+        ...
+```
+
+`AIDATALoader(shuffle=True)` shuffles **batch order**, not individual samples. This preserves contiguous reads.
+
+See [PyTorch integration](docs/pytorch.md).
+
+---
+
+## Supported data
+
+AIDATA currently stores fixed-width NumPy arrays:
+
+- `X`: at least 2 dimensions; axis 0 is the sample axis.
+- `y`: at least 1 dimension; axis 0 is the sample axis.
+- Multi-dimensional targets are supported, e.g. `(N,H,W)` and `(N,D,H,W)`.
+- Object, structured, and unsupported void dtypes are rejected.
+- Non-empty datasets cannot have zero-sized dimensions after the sample axis.
+- Native-endian fixed-width dtypes are stored.
+
+Examples include:
+
+```text
+(N, features)
+(N, channels, height, width)
+(N, sequence_length, embedding_dim)
+(N, height, width)
+(N, depth, height, width)
+```
+
+AIDATA does not currently store arbitrary Python objects, strings, ragged arrays, or structured NumPy records.
+
+---
+
+## Reliability and hardening
+
+AIDATA 0.5.6 validates the file structure before serving data. The implementation includes:
+
+- atomic temporary-file writes followed by `os.replace`
+- CRC32 validation for X/y chunk payloads
+- SHA-256 validation of metadata
+- strict header, footer, metadata, index, range, and size validation
+- bounded zlib decompression
+- rejection of incomplete zlib streams
+- rejection of trailing bytes after compressed members
+- LRU chunk caching
+- worker-local PyTorch file handles
+- deterministic mutation and truncation tests
+
+CRC32 is used for corruption detection, **not cryptographic authentication**. AIDATA is not an encrypted or authenticated container.
+
+See [Reliability and security](docs/reliability.md).
+
+---
+
+## File format
+
+AIDATA v1 is intentionally simple:
+
+```text
+┌──────────────┐
+│ Header       │
+├──────────────┤
+│ JSON metadata│
+├──────────────┤
+│ Chunk 0      │
+│   X payload  │
+│   y payload  │
+├──────────────┤
+│ Chunk 1      │
+│   X payload  │
+│   y payload  │
+├──────────────┤
+│ ...          │
+├──────────────┤
+│ JSON index   │
+├──────────────┤
+│ Footer       │
+└──────────────┘
+```
+
+The footer points to the JSON index. The index stores byte offsets, compressed sizes, raw sizes, sample ranges, and CRC32 values for each chunk.
+
+See [Format specification](docs/format.md).
+
+---
+
+## Performance philosophy
+
+AIDATA is designed around **sample-oriented, chunked I/O**, not around claiming a universal speed advantage over every format.
+
+Performance depends on:
+
+- storage device
+- filesystem
+- dataset shape and dtype
+- chunk size
+- compression level
+- access pattern
+- operating system
+- CPU and memory bandwidth
+- number of workers
+
+Run the repository benchmarks on your own hardware before making production decisions:
+
+```bash
+python examples/benchmark.py
+python examples/training_benchmark.py
+```
+
+Benchmark methodology is documented in [Benchmarking](docs/benchmarking.md).
+
+---
+
+## API surface
+
+The main public API is intentionally small:
+
+```python
+from aidata import (
+    AIDATAWriter,
+    AIDATAReader,
+    AIDATADataset,
+    AIDATABatchDataset,
+    AIDATALoader,
+)
+```
+
+AIDATA-specific exceptions are available from `aidata.exceptions`:
+
+```python
+from aidata.exceptions import AIDATAError, InvalidAIDATAFile, UnsupportedVersion
+```
+
+See [API reference](docs/api.md).
+
+---
+
+## Examples
+
+The repository includes examples for:
+
+```text
+examples/
+├── basic.py
+├── benchmark.py
+├── multidim_targets.py
+├── profile_training.py
+├── pytorch_dataloader.py
+├── pytorch_train.py
+├── train_demo.py
+├── train_seg.aidata
+├── training_benchmark.py
+└── volumetric.aidata
+```
+
+Run an example from a source checkout with:
+
+```bash
+PYTHONPATH=src python examples/basic.py
+```
+
+If installed editable, simply run:
+
+```bash
+python examples/basic.py
+```
+
+---
+
+## Testing
+
+Run the complete suite:
+
+```bash
+pytest -q
+```
+
+Useful commands:
+
+```bash
+pytest tests/test_basic.py -q
+pytest tests/test_hardening.py -q
+pytest tests/test_fuzzing.py -q
+pytest tests/test_api_compatibility.py -q
+```
+
+The suite covers round trips, malformed files, checksums, metadata validation, compression, multidimensional targets, PyTorch integration, worker isolation, API compatibility, truncation, and deterministic corruption mutations.
+
+---
+
+## Compatibility policy
+
+AIDATA `0.5.x` uses the AIDATA v1 file format.
+
+The project distinguishes between:
+
+- **Python API compatibility** — public classes and methods should not be broken casually.
+- **File-format compatibility** — future readers should document which older AIDATA files they can read.
+
+The v1 format is still evolving. **Do not treat pre-1.0 file-format compatibility as permanently frozen.**
+
+Before the 1.0 release, format changes should be explicitly documented and covered by compatibility fixtures.
+
+---
+
+## Roadmap
+
+The next major areas are:
+
+1. dataset profiling
+2. data validation
+3. streaming statistics
+4. CLI tooling
+5. dataset conversion
+6. balanced and stratified sampling
+7. data-quality scoring
+8. visualization integration
+9. optional compression backends
+10. distributed training support
+11. dataset versioning and diff
+12. data-drift detection
+
+See [Roadmap](docs/roadmap.md).
+
+---
+
+## Project structure
+
+```text
 aidata/
-├── src/aidata/              # Core library
-│   ├── __init__.py
-│   ├── writer.py            # AIDATAWriter
-│   ├── reader.py            # AIDATAReader
-│   ├── dataset.py           # PyTorch Datasets
-│   ├── loader.py            # AIDATALoader
+├── src/aidata/
+│   ├── writer.py
+│   ├── reader.py
+│   ├── dataset.py
+│   ├── loader.py
+│   ├── format.py
+│   ├── exceptions.py
 │   └── integrations/
-│       └── pytorch.py       # Legacy PyTorch wrappers
-├── examples/                # Runnable examples
-│   ├── basic.py
-│   ├── pytorch_train.py
-│   ├── benchmark.py
-│   └── training_benchmark.py
-├── tests/                   # pytest suite
-│   └── test_basic.py
-├── docs/                    # Documentation
-│   ├── QUICKSTART.md
-│   ├── API_REFERENCE.md
-│   └── FAQ.md
-├── pyproject.toml
-└── README.md
+├── tests/
+├── examples/
+├── docs/
+├── benchmarks/
+├── .github/
+├── README.md
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── SECURITY.md
+├── CODE_OF_CONDUCT.md
+├── CITATION.cff
+└── pyproject.toml
 ```
 
 ---
 
-## 📖 Documentation
+## Contributing
 
-| Document | Description |
-|----------|-------------|
-| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Step-by-step first-time setup |
-| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Complete API for every class & method |
-| [docs/EXAMPLES_GUIDE.md](docs/EXAMPLES_GUIDE.md) | Detailed walkthroughs of all examples |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the file format works under the hood |
-| [docs/FAQ.md](docs/FAQ.md) | Common questions & troubleshooting |
+Contributions are welcome. Before implementing a large feature, open an issue describing:
 
----
+- the ML/AI use case
+- the expected API
+- compatibility implications
+- performance implications
+- required tests
 
-## 🧪 Running Tests
-
-```bash
-pytest tests/test_basic.py -v
-```
-
-Expected output:
-```
-tests/test_basic.py::test_write_read_roundtrip PASSED
-tests/test_basic.py::test_aidata_dataset_tensors PASSED
-tests/test_basic.py::test_aidata_loader PASSED
-======================== 3 passed ========================
-```
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 ---
 
-## 🏃 Running Examples
+## Security
 
-```bash
-cd examples
-python basic.py              # Basic read/write demo
-python pytorch_train.py      # Full PyTorch training loop
-python benchmark.py          # Performance vs NumPy
-python training_benchmark.py # CSV vs NumPy vs AIDATA training
-```
+Do not use AIDATA as an authentication, encryption, or secure-serialization mechanism. The format is intended for numerical datasets and corruption detection.
+
+For security reports, see [SECURITY.md](SECURITY.md).
 
 ---
 
-## ⚙️ Requirements
+## License
 
-- Python >= 3.8
-- NumPy >= 1.20.0
-- PyTorch >= 1.10.0
-- zstandard >= 0.15.0
-
-See [requirements.txt](requirements.txt) for pinned versions.
+AIDATA is released under the MIT License. See [LICENSE](LICENSE).
 
 ---
 
-## 🤝 Contributing
+## Citation
 
-We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
-
-## 📜 License
-
-AIDATA is released under the [MIT License](LICENSE).
+If AIDATA becomes part of a research paper, benchmark, or public project, please cite the repository using [CITATION.cff](CITATION.cff).
 
 ---
 
-## 💬 Support
+## Status
 
-- 🐛 **Bug reports** → GitHub Issues
-- 💡 **Feature requests** → GitHub Discussions
-- 📧 **Questions** → Open a Discussion or email
+AIDATA is currently **beta software**. The implementation is hardened and tested, but the project is not yet promising a permanently stable 1.0 file format.
 
----
-
-> **Made with ❤️ for the ML community.**
-'''
-
-with open(f"{base}/README.md", "w") as f:
-    f.write(readme)
-
-print("README.md written")
+If you are evaluating AIDATA for production, pin the package version and keep your own benchmark and compatibility tests.

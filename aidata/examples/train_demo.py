@@ -8,11 +8,9 @@ from torch.utils.data import DataLoader
 from aidata import (
     AIDATAWriter,
     AIDATAReader,
-)
-
-from aidata.integrations import (
     AIDATABatchDataset,
 )
+
 
 
 # ============================================================
@@ -74,12 +72,12 @@ dataset = AIDATAReader("training.aidata", cache_size=8)
 # BATCH DATASET
 # ============================================================
 
-batch_dataset = AIDATABatchDataset(dataset, batch_size=BATCH_SIZE)
+train_batches = AIDATABatchDataset("training.aidata", batch_size=BATCH_SIZE)
 
 print()
 print("Samples:", len(dataset))
 print("Features:", FEATURES)
-print("Batches:", len(batch_dataset))
+print("Batches:", len(train_batches))
 print("Batch size:", BATCH_SIZE)
 
 
@@ -88,7 +86,7 @@ print("Batch size:", BATCH_SIZE)
 # ============================================================
 
 loader = DataLoader(
-    batch_dataset,
+    train_batches,
     batch_size=None,
     shuffle=True,
     num_workers=0,

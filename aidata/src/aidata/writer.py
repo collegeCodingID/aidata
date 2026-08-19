@@ -1,34 +1,40 @@
+from __future__ import annotations
+
+import hashlib
 import json
+import os
 import struct
+import tempfile
+import zlib
 from pathlib import Path
 
 import numpy as np
-import zstandard as zstd
-
-from .format import (
-    MAGIC,
-    VERSION,
-    HEADER_FORMAT,
-    FOOTER_FORMAT,
-)
 
 from .exceptions import AIDATAError
+from .format import FOOTER_FORMAT, HEADER_FORMAT, MAGIC, VERSION
 
 
 class AIDATAWriter:
-    """Writer for the AIDATA compressed dataset format.
+    """Write NumPy arrays to the AIDATA v1 chunked binary format."""
 
-    Now supports multi-dimensional targets (e.g. segmentation masks,
-    multi-label, images) in addition to 1D labels.
-
-    Parameters
-    ----------
-    path : str or pathlib.Path
-        Output file path.
-    """
+    RESERVED_METADATA_KEYS = {
+        "version", "samples", "features", "x_shape", "y_shape",
+        "x_dtype", "y_dtype", "x_ndim", "y_ndim", "compression",
+        "chunk_size", "compression_level", "checksum", "metadata_sha256", "format",
+    }
 
     def __init__(self, path):
         self.path = Path(path)
+
+    @staticmethod
+    def _canonical_metadata_bytes(metadata: dict) -> bytes:
+        return json.dumps(
+            metadata,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
 
     def write(
         self,
@@ -37,207 +43,156 @@ class AIDATAWriter:
         metadata=None,
         compression=True,
         chunk_size=4096,
+        compression_level=3,
         verbose=True,
     ):
-        """Write a dataset to an AIDATA file.
-
-        Parameters
-        ----------
-        X : array-like
-            Feature array. Must be at least 2D (samples first dim).
-        y : array-like
-            Target array. Must be at least 1D (samples first dim).
-        metadata : dict, optional
-            User-defined metadata stored in the file header.
-        compression : bool
-            Whether to apply zstd compression to chunks.
-        chunk_size : int
-            Number of samples per chunk.
-        verbose : bool
-            Print summary after writing.
-        """
-        # ==================================================
-        # Convert to NumPy
-        # ==================================================
-
         X = np.asarray(X)
         y = np.asarray(y)
 
-        # ==================================================
-        # Validation
-        # ==================================================
-
+        if not isinstance(compression, (bool, np.bool_)):
+            raise AIDATAError("compression must be a boolean")
         if X.ndim < 2:
-            raise AIDATAError(
-                "X must be at least 2D (samples, ...). "
-                f"Got shape {X.shape} with ndim={X.ndim}"
-            )
-
+            raise AIDATAError(f"X must be at least 2D. Got shape {X.shape}")
         if y.ndim < 1:
+            raise AIDATAError(f"y must be at least 1D. Got shape {y.shape}")
+        if X.shape[0] != y.shape[0]:
             raise AIDATAError(
-                "y must be at least 1D (samples, ...). "
-                f"Got shape {y.shape} with ndim={y.ndim}"
+                f"X and y must contain the same samples. Got X={len(X)}, y={len(y)}"
             )
+        if X.shape[0] > 0 and (any(int(v) == 0 for v in X.shape[1:]) or any(int(v) == 0 for v in y.shape[1:])):
+            raise AIDATAError("X and y dimensions after the sample axis must be non-zero")
+        if not isinstance(chunk_size, (int, np.integer)) or chunk_size <= 0:
+            raise AIDATAError("chunk_size must be a positive integer")
+        if not isinstance(compression_level, (int, np.integer)):
+            raise AIDATAError("compression_level must be an integer")
+        if compression and not 1 <= compression_level <= 9:
+            raise AIDATAError("compression_level must be an integer from 1 to 9 when compression is enabled")
+        if not compression:
+            compression_level = 0
+        if X.dtype.hasobject or y.dtype.hasobject:
+            raise AIDATAError("object dtype is not supported; use a fixed-width NumPy dtype")
+        if X.dtype.fields is not None or y.dtype.fields is not None:
+            raise AIDATAError("structured dtypes are not supported")
+        if X.dtype.kind == "V" or y.dtype.kind == "V":
+            raise AIDATAError("void dtypes are not supported")
 
-        if len(X) != len(y):
-            raise AIDATAError(
-                "X and y must contain the same number of samples. "
-                f"Got X={len(X)}, y={len(y)}"
-            )
+        # AIDATA stores native-endian bytes so readers behave consistently across machines.
+        if not X.dtype.isnative:
+            X = X.astype(X.dtype.newbyteorder("="), copy=False)
+        if not y.dtype.isnative:
+            y = y.astype(y.dtype.newbyteorder("="), copy=False)
 
-        if chunk_size <= 0:
-            raise AIDATAError("chunk_size must be greater than 0")
+        if metadata is not None and not isinstance(metadata, dict):
+            raise AIDATAError("metadata must be a dictionary or None")
+        user_metadata = {} if metadata is None else dict(metadata)
+        reserved = self.RESERVED_METADATA_KEYS.intersection(user_metadata)
+        if reserved:
+            raise AIDATAError(f"metadata contains reserved keys: {sorted(reserved)}")
 
-        # ==================================================
-        # Metadata
-        # ==================================================
-
-        user_metadata = metadata or {}
-
-        metadata = {
+        compression_name = "zlib" if compression else "none"
+        file_metadata = {
+            "format": "AIDATA",
             "version": VERSION,
-            "samples": len(X),
-            "features": X.shape[1] if X.ndim == 2 else X.shape,  # backward compat
+            "samples": int(X.shape[0]),
+            "features": int(X.shape[1]) if X.ndim == 2 else list(X.shape[1:]),
             "x_shape": list(X.shape),
             "y_shape": list(y.shape),
-            "x_dtype": str(X.dtype),
-            "y_dtype": str(y.dtype),
-            "x_ndim": X.ndim,
-            "y_ndim": y.ndim,
-            "compression": "zstd" if compression else "none",
-            "chunk_size": chunk_size,
+            "x_dtype": X.dtype.str,
+            "y_dtype": y.dtype.str,
+            "x_ndim": int(X.ndim),
+            "y_ndim": int(y.ndim),
+            "compression": compression_name,
+            "compression_level": int(compression_level) if compression else 0,
+            "chunk_size": int(chunk_size),
+            "checksum": "crc32",
             **user_metadata,
         }
 
-        metadata_bytes = json.dumps(metadata).encode("utf-8")
+        # Protect metadata itself against accidental corruption/tampering.
+        try:
+            file_metadata["metadata_sha256"] = hashlib.sha256(
+                self._canonical_metadata_bytes(file_metadata)
+            ).hexdigest()
+            metadata_bytes = self._canonical_metadata_bytes(file_metadata)
+        except (TypeError, ValueError) as exc:
+            raise AIDATAError("metadata must contain only JSON-serializable values") from exc
+        if len(metadata_bytes) > 0xFFFFFFFF:
+            raise AIDATAError("metadata is too large for the AIDATA v1 format")
 
-        # ==================================================
-        # Compressor
-        # ==================================================
+        compressor = (lambda data: zlib.compress(data, level=int(compression_level))) if compression else None
+        self.path.parent.mkdir(parents=True, exist_ok=True)
 
-        compressor = None
-        if compression:
-            compressor = zstd.ZstdCompressor(level=3)
-
-        # ==================================================
-        # Prepare chunks
-        # ==================================================
-
-        chunks = []
-
-        for start in range(0, len(X), chunk_size):
-            end = min(start + chunk_size, len(X))
-
-            x_chunk = X[start:end]
-            y_chunk = y[start:end]
-
-            # ------------------------------------------
-            # Raw bytes
-            # ------------------------------------------
-
-            x_raw = x_chunk.tobytes()
-            y_raw = y_chunk.tobytes()
-
-            # ------------------------------------------
-            # Compress
-            # ------------------------------------------
-
-            if compressor is not None:
-                x_data = compressor.compress(x_raw)
-                y_data = compressor.compress(y_raw)
-            else:
-                x_data = x_raw
-                y_data = y_raw
-
-            chunks.append({
-                "start": start,
-                "end": end,
-                "x_raw_size": len(x_raw),
-                "y_raw_size": len(y_raw),
-                "x_size": len(x_data),
-                "y_size": len(y_data),
-                "x_data": x_data,
-                "y_data": y_data,
-            })
-
-        # ==================================================
-        # Header
-        # ==================================================
-
-        header = struct.pack(
-            HEADER_FORMAT,
-            MAGIC,
-            VERSION,
-            len(metadata_bytes),
-            len(chunks),
+        # Write to a sibling temporary file, then atomically replace the destination.
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{self.path.name}.", suffix=".tmp", dir=str(self.path.parent)
         )
+        os.close(fd)
 
-        # ==================================================
-        # Write
-        # ==================================================
+        index = []
+        chunk_count = 0
+        try:
+            with open(tmp_name, "wb") as f:
+                # chunk_count is patched after all chunks are written.
+                f.write(struct.pack(HEADER_FORMAT, MAGIC, VERSION, len(metadata_bytes), 0))
+                f.write(metadata_bytes)
 
-        with open(self.path, "wb") as f:
-            # ------------------------------------------
-            # Header
-            # ------------------------------------------
+                for start in range(0, X.shape[0], int(chunk_size)):
+                    end = min(start + int(chunk_size), X.shape[0])
+                    x_raw = np.ascontiguousarray(X[start:end]).tobytes(order="C")
+                    y_raw = np.ascontiguousarray(y[start:end]).tobytes(order="C")
+                    x_data = compressor(x_raw) if compressor else x_raw
+                    y_data = compressor(y_raw) if compressor else y_raw
 
-            f.write(header)
+                    x_offset = f.tell()
+                    f.write(x_data)
+                    y_offset = f.tell()
+                    f.write(y_data)
 
-            # ------------------------------------------
-            # Metadata
-            # ------------------------------------------
+                    index.append({
+                        "start": int(start),
+                        "end": int(end),
+                        "x_offset": int(x_offset),
+                        "y_offset": int(y_offset),
+                        "x_size": len(x_data),
+                        "y_size": len(y_data),
+                        "x_raw_size": len(x_raw),
+                        "y_raw_size": len(y_raw),
+                        "x_crc32": zlib.crc32(x_raw) & 0xFFFFFFFF,
+                        "y_crc32": zlib.crc32(y_raw) & 0xFFFFFFFF,
+                    })
+                    chunk_count += 1
 
-            f.write(metadata_bytes)
+                index_offset = f.tell()
+                try:
+                    index_bytes = self._canonical_metadata_bytes({"chunks": index})
+                except (TypeError, ValueError) as exc:
+                    raise AIDATAError("failed to serialize AIDATA index") from exc
+                if len(index_bytes) > 0xFFFFFFFF:
+                    raise AIDATAError("index is too large for the AIDATA v1 format")
+                f.write(index_bytes)
+                f.write(struct.pack(FOOTER_FORMAT, index_offset, len(index_bytes)))
 
-            # ------------------------------------------
-            # Chunks
-            # ------------------------------------------
+                f.seek(0)
+                f.write(struct.pack(
+                    HEADER_FORMAT, MAGIC, VERSION, len(metadata_bytes), chunk_count
+                ))
+                f.flush()
+                os.fsync(f.fileno())
 
-            index = []
-
-            for chunk in chunks:
-                # X location
-                x_offset = f.tell()
-                f.write(chunk["x_data"])
-
-                # Y location
-                y_offset = f.tell()
-                f.write(chunk["y_data"])
-
-                index.append({
-                    "start": chunk["start"],
-                    "end": chunk["end"],
-                    "x_offset": x_offset,
-                    "y_offset": y_offset,
-                    "x_size": chunk["x_size"],
-                    "y_size": chunk["y_size"],
-                    "x_raw_size": chunk["x_raw_size"],
-                    "y_raw_size": chunk["y_raw_size"],
-                })
-
-            # ------------------------------------------
-            # Index
-            # ------------------------------------------
-
-            index_offset = f.tell()
-            index_bytes = json.dumps(index).encode("utf-8")
-            f.write(index_bytes)
-
-            # ------------------------------------------
-            # Footer
-            # ------------------------------------------
-
-            f.write(struct.pack(FOOTER_FORMAT, index_offset, len(index_bytes)))
-
-        # ==================================================
-        # Information
-        # ==================================================
+            os.replace(tmp_name, self.path)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise
 
         if verbose:
             print(f"File created : {self.path}")
             print(f"Samples      : {len(X)}")
             print(f"X shape      : {X.shape}")
             print(f"y shape      : {y.shape}")
-            print(f"Chunks       : {len(chunks)}")
+            print(f"Chunks       : {chunk_count}")
             print(f"Chunk size   : {chunk_size}")
-            print(f"Compression  : {metadata['compression']}")
+            print(f"Compression  : {compression_name}")
+            print("Checksum     : crc32")
